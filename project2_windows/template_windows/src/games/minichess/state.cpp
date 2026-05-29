@@ -104,7 +104,7 @@ int State::evaluate(
          for(int i=0; i<BOARD_H; i++){//bikin nested loop buat cari posisi si player's king ama oponent's king
             for(int j=0; j<BOARD_W; j++){
                 int id_self = self_board[i][j]; //piece kita yang ad di posisi ij
-                int id_opp = self_board[i][j];
+                int id_opp = oppn_board[i][j];
 
                 if(id_self){// index is not 0 --> not empty
                     self_score += kp_material[id_self]; //get the score of the type (material value) 
