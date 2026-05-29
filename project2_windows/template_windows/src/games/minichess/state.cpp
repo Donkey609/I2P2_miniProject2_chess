@@ -15,15 +15,17 @@
  *============================================================*/
 
 // KP material (10x scale for fine positional granularity)
-static const int kp_material[7] = {0, 20, 60, 70, 80, 200, 1000};
-
+static const int kp_material[7] = {0, 20, 60, 70, 80, 200, 1000}; //setiap piece ada score
+//empty = 0, pawn= 20, rook = 60, knight = 70, bishop = 80, queen = 200, king = 1000;
+//so if white ada queen +rook = 200 + 60 = 260
 // Material-only (simple scale)
-static const int simple_material[7] = {0, 2, 6, 7, 8, 20, 100};
+static const int simple_material[7] = {0, 2, 6, 7, 8, 20, 100};//same idea kek atas cuman di scalre down, ini dipake buat simpler evaluations
 
 // Piece-Square Tables (white perspective, mirror for black)
-static const int pst[6][BOARD_H][BOARD_W] = {
+//                   piece type, posisi row, posisi col 
+static const int pst[6][BOARD_H][BOARD_W] = { //buat positions
     // Pawn
-    {{ 0,  0,  0,  0,  0}, {15, 15, 15, 15, 15}, { 4,  6, 10,  6,  4},
+    {{ 0,  0,  0,  0,  0}, {15, 15, 15, 15, 15}, { 4,  6, 10,  6,  4}, //ada 6 rows (idx 0), kalo pawn nya dirow 1 --> dapet 15 point, kalp dia di row 2 col 1 --> +6 points
      { 2,  4,  6,  4,  2}, { 0,  2,  2,  2,  0}, { 0,  0,  0,  0,  0}},
     // Rook
     {{ 2,  2,  2,  2,  2}, { 4,  4,  4,  4,  4}, { 0,  0,  2,  0,  0},
@@ -43,14 +45,14 @@ static const int pst[6][BOARD_H][BOARD_W] = {
 };
 
 // King tropism weights
-static const int tropism_w[7] = {0, 0, 3, 3, 2, 5, 0};
+static const int tropism_w[7] = {0, 0, 3, 3, 2, 5, 0};//score yg didpaetin kalo close ke opponent's king queen paling gede
 
-static int king_tropism(
+static int king_tropism( //itung attack bonus
     int piece_type,
     int pr, int pc,
     int ekr, int ekc
 ){
-    int dist = std::max(std::abs(pr - ekr), std::abs(pc - ekc));
+    int dist = std::max(std::abs(pr - ekr), std::abs(pc - ekc)); //itung distance
     if(dist <= 2){
         return tropism_w[piece_type] * (3 - dist);
     }
@@ -71,30 +73,84 @@ int State::evaluate(
 
     // [ Hackathon TODO 1-1 ]
     // if in win state, return max score(you can check base_state.hpp for max score)
+    if(this->game_state == WIN) return P_MAX;
     
     auto self_board = this->board.board[this->player];
     auto oppn_board = this->board.board[1 - this->player];
     int self_score = 0, oppn_score = 0;
 
-    if(use_kp_eval){
+    if(use_kp_eval){ //kalo pake evaluation ribet
         /* === KP eval: material + PST + tropism === */
 
         int self_kr = -1, self_kc = -1;
         int oppn_kr = -1, oppn_kc = -1;
         // [ Hackathon TODO 1-3 ]
         // get the position for player's king and opponent's king
+        for(int i=0; i<BOARD_H; i++){//bikin nested loop buat cari posisi si player's king ama oponent's king
+            for(int j=0; j<BOARD_W; j++){
+                if(self_board[i][j] == 6){ //king is represented by index 6
+                    self_kr = i;
+                    self_kc= j;
+                }
+                if(oppn_board[i][j] == 6){
+                    oppn_kr = i;
+                    oppn_kc =j;
+                }
+            }
+        }
 
         // [ Hackathon TODO 1-4 ]
         // sum player/opponent pieces' value and add to score
+         for(int i=0; i<BOARD_H; i++){//bikin nested loop buat cari posisi si player's king ama oponent's king
+            for(int j=0; j<BOARD_W; j++){
+                int id_self = self_board[i][j]; //piece kita yang ad di posisi ij
+                int id_opp = self_board[i][j];
+
+                if(id_self){// index is not 0 --> not empty
+                    self_score += kp_material[id_self]; //get the score of the type (material value) 
+                    int pst_r; //ini buat position bonus --> tau dulu positionnya gmn
+                    //pst itu dari white pov
+                    //player 0 itu white
+                    //player 1 itu black
+                    //karena itu kalo white dia normal, tapi kalo black boardnya harus diswitch
+                    if(this->player == 0) pst_r = i; //kalo misal playernya putih the board stays normal
+                    else pst_r = BOARD_H-1-i; //kalo player item flip the row/board
+                                     //piece type//posisi row//posis col
+                    self_score += pst[id_self-1][pst_r][j];
+
+                    //kalo ketemu king, tambahin bonys for being close to it
+                    if(oppn_kr != -1) self_score += king_tropism(id_self, i, j, oppn_kr, oppn_kc);
+                }
+                if(id_opp){//sama alesane 
+                    oppn_score += kp_material[id_opp]; //get the score of the type 
+                    int pst_r;
+                    if(this->player == 1) pst_r = i;
+                    else pst_r = BOARD_H-1-i;
+
+                    oppn_score += pst[id_opp-1][pst_r][j];
+
+                    if(self_kr != -1) oppn_score += king_tropism(id_opp, i, j, self_kr, self_kc);
+                }
+               
+            }
+        }
         // if enemy king is still on the board, you should also call king_tropism for your pieces and add the value to score
         // king_tropism is already given above
 
-    }else{
+    }else{ //kalo pake evaluation simple -->no bonus, just count the pieces
         /* === Simple material-only eval === */
 
         // [ Hackathon TODO 1-2 ]
         // Simply add each piece's value to score
+        for(int i = 0; i < BOARD_H; i++){
+            for(int j = 0; j < BOARD_W; j++){
+                int id_self = self_board[i][j];
+                int id_opp = oppn_board[i][j];
 
+                if(id_self) self_score += simple_material[id_self];
+                if(id_opp) oppn_score += simple_material[id_opp];
+            }
+        }
     }
 
     int bonus = 0;
@@ -104,6 +160,20 @@ int State::evaluate(
         // [ Hackathon TODO 1-5 ]
         // you can calculate mobility by legal actions size
         // bonus += 2 * (self_mobility - oppn_mobility);
+        int old_player = this->player; //ini bakal switch terus jadi old_player itu kek misal white trus nanti switch ke blek
+
+        this->player = old_player; //itung whites move kalo missal oldlayer itu white
+        this->get_legal_actions(); //generate moves legal si white
+        int self_mob = this->legal_actions.size(); //num of legal moves
+
+        this->player = 1 - old_player; //switch player
+        this->get_legal_actions();
+        int oppn_mob = this->legal_actions.size();//sama ae kek yg diatas
+
+        this->player = old_player; //ok switch bacj 
+        this->get_legal_actions(); //gemerate white moves
+
+        bonus += 2 * (self_mob - oppn_mob); //formula for bonus
 
     }
 
@@ -221,7 +291,14 @@ static const int move_table_rook_bishop[8][7][2] = {
 // [ Hackathon TODO 2-1 ]
 // fill the knight move table
 static const int move_table_knight[8][2] = {
-
+    { 1,  2}, //knight can only move L, either 2 boxes(up, down, left, right) folowed by 1 box(up, down, left, right)
+    { -1, 2},
+    {1,  -2},
+    {-1, -2},
+    { 2,  1},
+    { 2, -1},
+    {-2,  1},
+    {-2, -1}
 };
 static const int move_table_king[8][2] = {
   {1, 0}, {0, 1}, {-1, 0}, {0, -1}, 
@@ -332,6 +409,30 @@ void State::get_legal_actions_naive(){
                     case 3: //knight
                         // [ Hackathon TODO 2-2 ]
                         // complete knight's movement, you can refer to other pieces' movement
+                        for(auto move: move_table_knight){ //loop through 8 knight moves each iteration is move so basically like i
+                            int pos[2] = {move[0] + i, move[1] + j}; //to store destination square so ex kniht is at  i=3, j=2
+                            //and move = {1,2}; --> posisi awal + possible move
+
+                            if(pos[0] >= BOARD_H || pos[0] < 0 || pos[1] >= BOARD_W || pos[1] < 0){ //check boundaries
+                                continue; //skip possible position -->try next move
+                            }
+
+                            now_piece = self_board[pos[0]][pos[1]]; //check the dest spot
+                            if(now_piece){ //if there's another piece(your piece) skip move
+                                continue;
+                            }
+
+                            //if its inside the board and dest spot is empty
+                            all_actions.push_back(Move(Point(i, j), Point(pos[0], pos[1]))); //create the move and then add to list of legal moves
+
+                            oppn_piece = oppn_board[pos[0]][pos[1]]; //check the opponent piece in the dest spot
+                            if(oppn_piece == 6){ //if its a king then win
+                                this->game_state = WIN;
+                                this->legal_actions = all_actions; //add into legal moves
+                                return;
+                            }
+                        }
+                        break;
 
                     case 6: //king
                         for(auto move: move_table_king){
