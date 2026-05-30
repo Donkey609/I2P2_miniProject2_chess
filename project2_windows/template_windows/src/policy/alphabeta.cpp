@@ -8,13 +8,15 @@
  *
  * Negamax without pruning. Caller manages memory.
  *============================================================*/
+//check move bisa vapture opp g
 static bool is_capture(State *state, const Move& move){
     Point to = move.second;
-    int opp = 1 - state->player;
-    return state->board.board[opp][to.first][to.second] != 0;
+    //gets dest square
+    int opp = 1 - state->player; //gets opp player
+    return state->board.board[opp][to.first][to.second] != 0; //true if the opp has a piece on dest square
 }
 
-int AlphaBeta::quiescence(
+int AlphaBeta::quiescence( // used when normal search reaches depth 0
     State *state,
     GameHistory& history,
     int ply,
@@ -24,30 +26,31 @@ int AlphaBeta::quiescence(
     int beta
 ){
     ctx.nodes++;
-
+    //eval cur board
     int stand_pat = state->evaluate(
         p.use_kp_eval,
         p.use_eval_mobility,
         &history
     );
-
+    //prune if post is good
     if(stand_pat >= beta){
         return beta;
     }
-
+    //update alpha if cur eval is better
     if(stand_pat > alpha){
         alpha = stand_pat;
     }
 
+    //generate moves if needed
     if(state->legal_actions.empty() && state->game_state == UNKNOWN){
         state->get_legal_actions();
     }
 
     if(state->game_state == WIN){
         return P_MAX - ply;
-    }
+    }//return smaller steps is better
 
-    for(auto& action : state->legal_actions){
+    for(auto& action : state->legal_actions){ //oly searches capture moves - non cap moves are skipped
         if(!is_capture(state, action)){
             continue;
         }
@@ -72,6 +75,7 @@ int AlphaBeta::quiescence(
 
     return alpha;
 }
+
 int AlphaBeta::eval_ctx(
     State *state,
     int depth,
@@ -83,8 +87,8 @@ int AlphaBeta::eval_ctx(
      int alpha,
     int beta
 ){
-    ctx.nodes++;
-    if(ply > ctx.seldepth){
+    ctx.nodes++; //count one searched node
+    if(ply > ctx.seldepth){ //track deepest lvl reached
         ctx.seldepth = ply;
     }
     if(ctx.stop){
@@ -113,9 +117,10 @@ int AlphaBeta::eval_ctx(
     int rep_score;
     if(state->check_repetition(history, rep_score)){
         return rep_score;
-    }
-    history.push(state->hash());
+    } //handle repeated pos
+    history.push(state->hash()); // save cur board to hitory
 
+    //does quescence
     if(depth <= 0){
         int score = quiescence(state, history, ply, ctx, p, alpha, beta );
 
@@ -125,6 +130,7 @@ int AlphaBeta::eval_ctx(
 
     /* === Negamax loop === */
     int best_score = M_MAX;
+    //try every legal move, unless pruning stops early
 
     for(auto& action : state->legal_actions){
         // [ Hackathon TODO 3-2 ]
@@ -133,7 +139,7 @@ int AlphaBeta::eval_ctx(
         //minimax explores these child pos to det the best move
 
         bool same = next->same_player_as_parent();
-
+        //check if same player moves again
         // [Hackathon TODO 3-3]
         // search the child one level deeper //TAMBAHIN ALPHA BETA
         int raw = eval_ctx(next, depth - 1, history, ply + 1, ctx, p, -beta, -alpha);
@@ -167,31 +173,39 @@ int AlphaBeta::eval_ctx(
  *
  * Iterate legal moves, call eval_ctx, return SearchResult.
  *============================================================*/
+//root func that choosest best move
 SearchResult AlphaBeta::search(
     State *state,
     int depth,
     GameHistory& history,
     SearchContext& ctx
 ){
+    //clear old search data 
     ctx.reset();
+    //load settings
     MMParams p = MMParams::from_map(ctx.params);
+    //prepare answer
     SearchResult result;
     result.depth = depth;
 
+    //generate root moves
     if(!state->legal_actions.size()){
         state->get_legal_actions();
     }
 
 
-    int best_score = M_MAX - 10;
+    int best_score = M_MAX - 10; //start with bad score
     int move_index = 0;
     int total_moves = (int)state->legal_actions.size();
 
+    //try each root move
     for(auto& action : state->legal_actions){
         /* [ Hackathon TODO 4-1 ]
          * search this move like TODO 3, but starting from the root */ 
         State* next = state->next_state(action);
         bool same = next->same_player_as_parent();
+        //create  board after that move
+        //search move using alpha beta
         int raw = eval_ctx(next, depth - 1, history, 1, ctx, p, M_MAX, P_MAX); //copas but from the root, root is 0 and next is 1 so automatically next is alr one move away from root
         int score;
         if(same) score = raw;
