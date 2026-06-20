@@ -5,21 +5,20 @@
 #include <cstddef>
 
 #include "state.hpp"
-#include "AlphaBeta.hpp"
+#include "113006233_Submission.hpp"
 
 namespace {
 
-/*============================================================
- * Constants
- *============================================================*/
+/////////////////////////Searchl constnat
 
 static constexpr int MAX_PLY = 128;
 
-// 1M entries. Strong, but not absurdly huge.
+// 1M TT entries.
+// Big enough to matter, small enough to not summon the memory police.
 static constexpr std::size_t TT_SIZE = 1u << 20;
 static constexpr std::size_t TT_MASK = TT_SIZE - 1;
 
-// Move ordering values, not eval values.
+// Move-ordering values, not evaluation values.
 static const int order_piece_value[7] = {
     0,      // empty
     100,    // pawn
@@ -30,12 +29,13 @@ static const int order_piece_value[7] = {
     20000   // king
 };
 
-// Eval scale, matching your KP material style.
+// Evaluation-scale values for quiescence delta pruning.
+// This matches your KP material scale better.
 static const int eval_piece_value[7] = {
     0, 20, 60, 70, 80, 200, 1000
 };
 
-/////////////////////////////////TRANSPOSTITION TABLE
+///////////////////////////////////////////////Transposition Table
 
 enum TTFlag : std::uint8_t {
     TT_EXACT = 0,
@@ -55,15 +55,14 @@ struct TTEntry {
 
 static std::vector<TTEntry> tt_table(TT_SIZE);
 
-//////////////////////////////////////////////////Killer Moves + History Heuristic
+/////////////////////////////////////////////////////////////Killer Moves + History Heuristic
 
 static Move killer_moves[MAX_PLY][2];
 static bool killer_valid[MAX_PLY][2] = {};
 
 static int history_heuristic[2][BOARD_H][BOARD_W][BOARD_H][BOARD_W] = {};
 
-//////////////////////////////////////////////////Small helpers
-
+///////////////////////////////////////////////////////////////Tiny Helpers
 inline void update_seldepth(SearchContext& ctx, int ply) {
     if (ply > ctx.seldepth) {
         ctx.seldepth = ply;
@@ -74,6 +73,45 @@ inline void ensure_legal_actions(State* state) {
     if (state->legal_actions.empty() && state->game_state == UNKNOWN) {
         state->get_legal_actions();
     }
+}
+
+inline bool same_move(const Move& a, const Move& b) {
+    return a.first.first == b.first.first &&
+           a.first.second == b.first.second &&
+           a.second.first == b.second.first &&
+           a.second.second == b.second.second;
+}
+
+inline int own_piece_at(State* state, const Move& action) {
+    return state->piece_at(
+        state->player,
+        action.first.first,
+        action.first.second
+    );
+}
+
+inline int captured_piece_at(State* state, const Move& action) {
+    return state->piece_at(
+        1 - state->player,
+        action.second.first,
+        action.second.second
+    );
+}
+
+inline bool is_capture(State* state, const Move& action) {
+    return captured_piece_at(state, action) != 0;
+}
+
+inline bool is_promotion(State* state, const Move& action) {
+    int piece = own_piece_at(state, action);
+
+    if (piece != 1) {
+        return false;
+    }
+
+    int to_r = action.second.first;
+
+    return to_r == 0 || to_r == BOARD_H - 1;
 }
 
 inline int clamp_ply(int ply) {
@@ -88,46 +126,11 @@ inline int clamp_ply(int ply) {
     return ply;
 }
 
-inline bool same_move(const Move& a, const Move& b) {
-    return a.first.first == b.first.first &&
-           a.first.second == b.first.second &&
-           a.second.first == b.second.first &&
-           a.second.second == b.second.second;
+inline bool is_quiet_move(State* state, const Move& action) {
+    return !is_capture(state, action) && !is_promotion(state, action);
 }
 
-inline int own_piece_at(State* state, const Move& move) {
-    return state->board.board[state->player]
-        [move.first.first]
-        [move.first.second];
-}
-
-inline int captured_piece_at(State* state, const Move& move) {
-    return state->board.board[1 - state->player]
-        [move.second.first]
-        [move.second.second];
-}
-
-inline bool is_capture(State* state, const Move& move) {
-    return captured_piece_at(state, move) != 0;
-}
-
-inline bool is_promotion(State* state, const Move& move) {
-    int piece = own_piece_at(state, move);
-
-    if (piece != 1) {
-        return false;
-    }
-
-    int to_r = move.second.first;
-
-    return to_r == 0 || to_r == BOARD_H - 1;
-}
-
-inline bool is_quiet_move(State* state, const Move& move) {
-    return !is_capture(state, move) && !is_promotion(state, move);
-}
-
-////////////////////////////////////////////////////Mate score adjustment
+/////////////////////////////////////////////////////////////////// Mate Score TT Adjustment
 
 inline int score_to_tt(int score, int ply) {
     if (score > P_MAX - 1024) {
@@ -186,27 +189,27 @@ inline void tt_store(
     }
 }
 
-///////////////////////////////////////////////////////////Killer + History Updates
+//////////////////////////////////////////////////////////////////////////Killer + History Update
 
-inline void add_killer(const Move& move, int ply) {
+inline void add_killer(const Move& action, int ply) {
     int p = clamp_ply(ply);
 
-    if (!killer_valid[p][0] || !same_move(move, killer_moves[p][0])) {
+    if (!killer_valid[p][0] || !same_move(action, killer_moves[p][0])) {
         killer_moves[p][1] = killer_moves[p][0];
         killer_valid[p][1] = killer_valid[p][0];
 
-        killer_moves[p][0] = move;
+        killer_moves[p][0] = action;
         killer_valid[p][0] = true;
     }
 }
 
-inline void add_history(State* state, const Move& move, int depth) {
+inline void add_history(State* state, const Move& action, int depth) {
     int side = state->player;
 
-    int fr = move.first.first;
-    int fc = move.first.second;
-    int tr = move.second.first;
-    int tc = move.second.second;
+    int fr = action.first.first;
+    int fc = action.first.second;
+    int tr = action.second.first;
+    int tc = action.second.second;
 
     int bonus = depth * depth;
 
@@ -214,41 +217,44 @@ inline void add_history(State* state, const Move& move, int depth) {
 
     h += bonus;
 
+    // Avoid overflow. Humanity already has enough of that.
     if (h > 100000000) {
         h /= 2;
     }
 }
 
-inline int get_history_score(State* state, const Move& move) {
+inline int get_history_score(State* state, const Move& action) {
     int side = state->player;
 
     return history_heuristic[side]
-        [move.first.first]
-        [move.first.second]
-        [move.second.first]
-        [move.second.second];
+        [action.first.first]
+        [action.first.second]
+        [action.second.first]
+        [action.second.second];
 }
 
-//////////////////////////////////////////////////Move ordering
+/////////////////////////////////////////////////////////////Move Ordering
 
 int move_order_score(
     State* state,
-    const Move& move,
+    const Move& action,
     const Move* tt_best,
     bool qsearch,
     int ply
 ) {
     int score = 0;
 
-    if (!qsearch && tt_best && same_move(move, *tt_best)) {
+    if (!qsearch && tt_best && same_move(action, *tt_best)) {
         score += 100000000;
     }
 
-    int captured = captured_piece_at(state, move);
+    int captured = captured_piece_at(state, action);
 
     if (captured) {
-        int attacker = own_piece_at(state, move);
+        int attacker = own_piece_at(state, action);
 
+        // MVV-LVA:
+        // Most Valuable Victim - Least Valuable Attacker.
         score += 50000000;
         score += order_piece_value[captured] * 32;
         score -= order_piece_value[attacker];
@@ -264,19 +270,19 @@ int move_order_score(
         return 0;
     }
 
-    if (is_promotion(state, move)) {
+    if (is_promotion(state, action)) {
         score += 20000000;
     }
 
     int p = clamp_ply(ply);
 
-    if (killer_valid[p][0] && same_move(move, killer_moves[p][0])) {
+    if (killer_valid[p][0] && same_move(action, killer_moves[p][0])) {
         score += 10000000;
-    } else if (killer_valid[p][1] && same_move(move, killer_moves[p][1])) {
+    } else if (killer_valid[p][1] && same_move(action, killer_moves[p][1])) {
         score += 9000000;
     }
 
-    score += get_history_score(state, move);
+    score += get_history_score(state, action);
 
     return score;
 }
@@ -303,7 +309,7 @@ void order_actions(
     );
 }
 
-///////////////////////////////////////////////////////////////////////Terminal / Repetition
+/////////////////////////////////////////////////////////////////////// Terminal / Repetition
 
 inline bool terminal_or_repetition_score(
     State* state,
@@ -332,13 +338,18 @@ inline bool terminal_or_repetition_score(
     return false;
 }
 
-////////////////////////////////////////////Late Move Reduction
+///////////////////////////////////////////Late Move Reduction
 
 inline int lmr_reduction(
     int depth,
     int move_number,
-    bool quiet
+    bool quiet,
+    bool first_child
 ) {
+    if (first_child) {
+        return 0;
+    }
+
     if (!quiet) {
         return 0;
     }
@@ -347,22 +358,20 @@ inline int lmr_reduction(
         return 0;
     }
 
-    if (move_number < 4) {
+    if (move_number < 3) {
         return 0;
     }
 
-    if (depth >= 6 && move_number >= 7) {
+    if (depth >= 6 && move_number >= 6) {
         return 2;
     }
 
     return 1;
 }
 
-} // namespace
+///////////////////////////////////////////////////////////Quiescence Search
 
-/////////////////////////////////////////////AlphaBeta — quiescence
-
-int AlphaBeta::quiescence(
+int quiescence(
     State* state,
     GameHistory& history,
     int ply,
@@ -385,7 +394,7 @@ int AlphaBeta::quiescence(
 
     history.push(state->hash());
 
-    int stand_pat = state->evaluate(
+    const int stand_pat = state->evaluate(
         p.use_kp_eval,
         p.use_eval_mobility,
         &history
@@ -405,10 +414,10 @@ int AlphaBeta::quiescence(
     for (const auto& action : state->legal_actions) {
         int captured = captured_piece_at(state, action);
 
-        // Since qsearch ordering puts captures first, first quiet move means done.
         if (!captured) {
             break;
         }
+
         if (
             p.use_kp_eval &&
             captured != 6 &&
@@ -418,7 +427,7 @@ int AlphaBeta::quiescence(
         }
 
         State* next = state->next_state(action);
-        bool same = next->same_player_as_parent();
+        const bool same = next->same_player_as_parent();
 
         int score;
 
@@ -448,9 +457,10 @@ int AlphaBeta::quiescence(
     return alpha;
 }
 
-//////////////////////////////////////////////////AlphaBeta — eval_ctx
+} // namespace
 
-int AlphaBeta::eval_ctx(
+///////////////////////////////////////PVS — eval_ctx
+int PVS::eval_ctx(
     State* state,
     int depth,
     GameHistory& history,
@@ -522,9 +532,11 @@ int AlphaBeta::eval_ctx(
         ply
     );
 
+    bool first_child = true;
+    bool has_best = false;
+
     int best_score = M_MAX;
     Move best_move{};
-    bool has_best = false;
 
     int move_number = 0;
 
@@ -532,24 +544,31 @@ int AlphaBeta::eval_ctx(
         move_number++;
 
         State* next = state->next_state(action);
-        bool same = next->same_player_as_parent();
+        const bool same = next->same_player_as_parent();
 
+        int score;
         int child_depth = depth - 1;
+
         bool quiet = is_quiet_move(state, action);
 
-        int reduction = lmr_reduction(depth, move_number, quiet);
-        int reduced_depth = child_depth - reduction;
+        int reduction = lmr_reduction(
+            depth,
+            move_number,
+            quiet,
+            first_child
+        );
 
+        int reduced_depth = child_depth - reduction;
         if (reduced_depth < 0) {
             reduced_depth = 0;
         }
 
-        int score;
-        if (reduction > 0) {
+        if (first_child) {
+            // PV move gets full search.
             if (same) {
                 score = eval_ctx(
                     next,
-                    reduced_depth,
+                    child_depth,
                     history,
                     ply + 1,
                     ctx,
@@ -560,7 +579,7 @@ int AlphaBeta::eval_ctx(
             } else {
                 score = -eval_ctx(
                     next,
-                    reduced_depth,
+                    child_depth,
                     history,
                     ply + 1,
                     ctx,
@@ -569,8 +588,61 @@ int AlphaBeta::eval_ctx(
                     -alpha
                 );
             }
+        } else {
+            // Later moves get null-window search first.
+            if (same) {
+                score = eval_ctx(
+                    next,
+                    reduced_depth,
+                    history,
+                    ply + 1,
+                    ctx,
+                    p,
+                    alpha,
+                    alpha + 1
+                );
+            } else {
+                score = -eval_ctx(
+                    next,
+                    reduced_depth,
+                    history,
+                    ply + 1,
+                    ctx,
+                    p,
+                    -alpha - 1,
+                    -alpha
+                );
+            }
 
-            if (score > alpha) {
+        
+            if (reduction > 0 && score > alpha) {
+                if (same) {
+                    score = eval_ctx(
+                        next,
+                        child_depth,
+                        history,
+                        ply + 1,
+                        ctx,
+                        p,
+                        alpha,
+                        alpha + 1
+                    );
+                } else {
+                    score = -eval_ctx(
+                        next,
+                        child_depth,
+                        history,
+                        ply + 1,
+                        ctx,
+                        p,
+                        -alpha - 1,
+                        -alpha
+                    );
+                }
+            }
+
+            // If it really looks good, do full-window re-search.
+            if (score > alpha && score < beta) {
                 if (same) {
                     score = eval_ctx(
                         next,
@@ -594,30 +666,6 @@ int AlphaBeta::eval_ctx(
                         -alpha
                     );
                 }
-            }
-        } else {
-            if (same) {
-                score = eval_ctx(
-                    next,
-                    child_depth,
-                    history,
-                    ply + 1,
-                    ctx,
-                    p,
-                    alpha,
-                    beta
-                );
-            } else {
-                score = -eval_ctx(
-                    next,
-                    child_depth,
-                    history,
-                    ply + 1,
-                    ctx,
-                    p,
-                    -beta,
-                    -alpha
-                );
             }
         }
 
@@ -646,6 +694,8 @@ int AlphaBeta::eval_ctx(
 
             break;
         }
+
+        first_child = false;
     }
 
     history.pop(key);
@@ -675,9 +725,9 @@ int AlphaBeta::eval_ctx(
     return result;
 }
 
-///////////////////////////////////////////AlphaBeta — search
+////////////////////////////////////////////////////////////////////////PVS — search
 
-SearchResult AlphaBeta::search(
+SearchResult PVS::search(
     State* state,
     int depth,
     GameHistory& history,
@@ -723,6 +773,7 @@ SearchResult AlphaBeta::search(
 
     int best_score = M_MAX;
     bool has_best = false;
+    bool first_child = true;
 
     int move_index = 0;
     const int total_moves = static_cast<int>(state->legal_actions.size());
@@ -731,32 +782,85 @@ SearchResult AlphaBeta::search(
 
     for (const auto& action : state->legal_actions) {
         State* next = state->next_state(action);
-        bool same = next->same_player_as_parent();
+        const bool same = next->same_player_as_parent();
 
         int score;
+        int child_depth = depth - 1;
 
-        if (same) {
-            score = eval_ctx(
-                next,
-                depth - 1,
-                history,
-                1,
-                ctx,
-                p,
-                alpha,
-                beta
-            );
+        if (first_child) {
+            if (same) {
+                score = eval_ctx(
+                    next,
+                    child_depth,
+                    history,
+                    1,
+                    ctx,
+                    p,
+                    alpha,
+                    beta
+                );
+            } else {
+                score = -eval_ctx(
+                    next,
+                    child_depth,
+                    history,
+                    1,
+                    ctx,
+                    p,
+                    -beta,
+                    -alpha
+                );
+            }
         } else {
-            score = -eval_ctx(
-                next,
-                depth - 1,
-                history,
-                1,
-                ctx,
-                p,
-                -beta,
-                -alpha
-            );
+            if (same) {
+                score = eval_ctx(
+                    next,
+                    child_depth,
+                    history,
+                    1,
+                    ctx,
+                    p,
+                    alpha,
+                    alpha + 1
+                );
+            } else {
+                score = -eval_ctx(
+                    next,
+                    child_depth,
+                    history,
+                    1,
+                    ctx,
+                    p,
+                    -alpha - 1,
+                    -alpha
+                );
+            }
+
+            if (score > alpha && score < beta) {
+                if (same) {
+                    score = eval_ctx(
+                        next,
+                        child_depth,
+                        history,
+                        1,
+                        ctx,
+                        p,
+                        alpha,
+                        beta
+                    );
+                } else {
+                    score = -eval_ctx(
+                        next,
+                        child_depth,
+                        history,
+                        1,
+                        ctx,
+                        p,
+                        -beta,
+                        -alpha
+                    );
+                }
+            }
         }
 
         delete next;
@@ -786,10 +890,7 @@ SearchResult AlphaBeta::search(
             alpha = score;
         }
 
-        if (alpha >= beta) {
-            break;
-        }
-
+        first_child = false;
         move_index++;
     }
 
@@ -812,9 +913,9 @@ SearchResult AlphaBeta::search(
     return result;
 }
 
-/////////////////////////////////////////////////////////////////////AlphaBeta — default_params / param_defs
+//////////////////////////////////////////////////////////////////////PVS — default_params / param_defs
 
-ParamMap AlphaBeta::default_params() {
+ParamMap PVS::default_params() {
     return {
         {"UseKPEval", "true"},
         {"UseEvalMobility", "true"},
@@ -822,7 +923,7 @@ ParamMap AlphaBeta::default_params() {
     };
 }
 
-std::vector<ParamDef> AlphaBeta::param_defs() {
+std::vector<ParamDef> PVS::param_defs() {
     return {
         {"UseKPEval", ParamDef::CHECK, "true"},
         {"UseEvalMobility", ParamDef::CHECK, "true"},

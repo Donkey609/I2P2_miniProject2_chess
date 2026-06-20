@@ -170,3 +170,12 @@ std::vector<ParamDef> MiniMax::param_defs(){
         {"ReportPartial", ParamDef::CHECK, "true"},
     };
 }
+/// BUAT TESTING
+//INI buat build filenya klo misal kau ad code yg diganti
+//g++ --std=c++2a -Wall -Wextra -Wpedantic -g -O3 -march=native -Isrc/games/minichess -Isrc/state -Isrc -o build/minichess-ubgi.exe src/games/minichess/state.cpp src/policy/alphabeta.cpp src/policy/minimax.cpp src/policy/pvs.cpp src/policy/random.cpp src/ubgi/ubgi.cpp
+//INI buat delete file sebelum dibuild lagi
+//Remove-Item -Force .\build\minichess-ubgi, .\build\minichess-benchmark -ErrorAction SilentlyContinue        
+//Remove-Item -Force .\unittest\build\*_test.exe, .\unittest\build\*_test -ErrorAction SilentlyContinue
+// Remove-Item -Force .\build\minichess-ubgi.exe, .\build\minichess-benchmark.exe -ErrorAction SilentlyContinue
+
+// python gui/main.py   
